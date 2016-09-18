@@ -1,0 +1,164 @@
+---
+title: "tooploox"
+author: "Krystian Szczucki"
+date: "18.09.2016"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Read in the data.csv and analyse the basic statistics of the v(n) or n = 24; 72; 168.
+
+```{r,echo=FALSE,eval=FALSE}
+library(dplyr)
+library(rmarkdown)
+tcsv <- read.csv(file = "data.csv",header = FALSE, na.strings = c("NA",""),stringsAsFactors = F, col.names = c("id",gsub("[[:space:]]", "", paste("v",c(1:168)))))
+tcsv[,2:169] <- sapply(tcsv[,2:169],as.numeric)
+#basic statistics for v(n)=24/72/168
+v24 = summary(tcsv$v24)
+v72 = summary(tcsv$v72)
+v168 = summary(tcsv$v168)
+df = data.frame(v24[],v72[],v168[])
+```
+
+```{r,echo=TRUE}
+length(rowSums(!is.na(tcsv[(1:168)])))
+quantile(tcsv$v168,c(0.1,0.5,0.9,0.95,0.99))
+apply(df,2,summary)
+```
+
+## Plot the distribution of the v(168). How would you describe the distribution of the views?
+
+```{r, echo=T}
+plot(density(tcsv$v168))
+```
+
+the distribution looks like right-sided skewed
+
+## Plot the distribution of the log transformed v(168). Does it ring a bell?
+
+```{r, echo=TRUE}
+plot(density(log(tcsv$v168)))
+
+x <- log(tcsv$v168)
+h<-hist(x, breaks=30, col="red", xlab="log transformed V168 distribution ",
+        main="Histogram with Normal Curve")
+xfit<-seq(min(x),max(x),length=40)
+yfit<-dnorm(xfit,mean=mean(x),sd=sd(x))
+yfit <- yfit*diff(h$mids[1:2])*length(x)
+lines(xfit, yfit, col="blue", lwd=2) 
+```
+
+almost perfect normal distribution - after removing outliers it should look even more bell shaped
+
+## removing outliers
+```{r}
+t_mean = mean(log(tcsv$v168))
+t_sd = sd(log(tcsv$v168))
+new_t <- filter(tcsv,log(v168) < (t_mean + 3*sd) & log(v168) > (t_mean - 3*sd))
+# 15 wartości odpadło
+```
+
+## Compute correlation coefficients between the log-transformed v(n) for n = 1; 2; ... 24 and v(168).
+
+```{r}
+#trochę 0 jest w v1 - można np dać tam średnią z kolumny? bo inaczej nie da rady cor zrobić z v168
+new_t[2][new_t[2] == 0] <- mean(new_t$v2)
+
+log_n <- log(new_t[2:25])
+cor(x=log_n,y=log(new_t$v168))
+#silna korelacja liniowa - z każdą kolejną godziną większa
+```
+
+## Randomly split the log-transformed dataset into training and test sets (10% of the dataset should be used for testing, rest for training).
+
+```{r, echo=T,eval=FALSE}
+set.seed(12)
+library(caret)
+new_t_log <- log(new_t[2:169])
+inTrain <- createDataPartition(y = new_t_log$v168,p = 0.9, list = FALSE)
+training <- new_t_log[inTrain,]
+testing <- new_t_log[-inTrain,]
+```
+
+
+## Using log-transformed training data, find linear regression model that minimizes OrdinaryLeast Squares (OLS) error function. It should take as the input v(n) and output v(168).
+
+```{r,echo=TRUE,eval=FALSE}
+u <-0
+for(i in names(training[1:167]))
+{
+        u[i]<-summary(train(v168~training[[i]],data = training,method = "lm"))$coef[2,2]
+}
+```
+
+```{r}
+sort(u,decreasing = F)[2]
+fit1 <-lm(v168~v167,data=training)
+summary(fit1)
+```
+
+## Extend the above linear regression model with multiple inputs, that is it for a given time n the model should take an array of view counts preceding time
+
+```{r,eval=FALSE}
+set.seed(12345)
+fit_all <- train(v168~.,data=training,method = "lm")
+summary(fit_all)
+fit2 <- train(v168~v72+v73+v74+v75+v85+v103+v114+v115+v108+v96+v97+v91+v82+v128+v129+v132+v166+v167,data=training,method = "lm")
+summary(fit2)
+fit3 <- train(v168~v73+v74+v75+v166+v167,data=training,method = "lm")
+```
+
+```{r}
+summary(fit3)
+```
+
+## To evaluate the proposed predictors, compute mean Relative Squared Error (mRSE),
+
+```{r}
+set.seed(12345)
+prediction <- predict(object = fit3,newdata = testing)
+mRSE <- (sum(prediction/testing$v168 - 1)^2)/length(prediction)
+mRSE
+```
+
+## Plot the mRSE values for n in (1:24) computed on the test dataset.
+```{r}
+mRSE <- 0
+for(i in 1:24)
+{
+        xnam <- paste("v", i, sep="")
+        fmla <- as.formula(paste("v168 ~ ", xnam))
+        fit <- train(fmla,data=training, method = "lm")
+        prediction <- predict(object = fit,newdata = testing)
+        mRSE <- c(mRSE,(sum(prediction/testing$v168 - 1)^2)/length(prediction)*1000)
+        
+}
+mRSE <- mRSE[2:25]
+
+mRSE2 <- 0
+for(i in 1:24){
+        xnam <- paste("v", 1:i, sep="")
+        fmla <- as.formula(paste("v168 ~ ", paste(xnam, collapse= "+")))
+        fit <- train(fmla, data = training,method="lm")
+        prediction <- predict(object = fit,newdata = testing)
+        mRSE2 <- c(mRSE2,(sum(prediction/testing$v168 - 1)^2)/length(prediction)*1000)
+}
+mRSE2 <- mRSE2[2:25]
+```
+
+## plot
+
+```{r,echo=FALSE}
+library(reshape2)
+library(ggplot2)
+df <- data.frame(mRSE,mRSE2,reference_time)
+names(df) <- c("Linear Regression","Multiple-input Linear Regression","reference_time")
+mdf <- melt(df, id.vars = "reference_time", measure.vars = c("Linear Regression", "Multiple-input Linear Regression"))
+
+p <- ggplot(data = mdf,aes(x=reference_time,y=value,group = variable,colour = variable, shape = variable))
+
+p + geom_line(size=1.2) + ggtitle(label = "mRSE comaprision") + geom_point(size=3, fill="white") + scale_shape_manual(values=c(3,21)) + theme_bw() + theme(legend.position=c(.8, 0.8), legend.title=element_blank(), legend.background = element_rect(colour = "black")) + xlab("Reference time (n)") + ylab("mRSE(*1000)") + scale_x_continuous(breaks=1:24)
+```
